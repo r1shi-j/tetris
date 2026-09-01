@@ -102,6 +102,13 @@ struct ContentView: View {
     @State private var pieceCol = 3
     @State private var isGameOver = false
     @State private var isFreshStart = true
+    @State private var linesCleared = 0
+    @State private var score = 0
+    @AppStorage("highScore") private var highScore = 0
+    
+    private var level: Int {
+        (linesCleared / 10) + 1
+    }
     
     private var projectedRow: Int {
         var testRow = pieceRow
@@ -131,6 +138,37 @@ struct ContentView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 VStack {
+                    Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 5) {
+                        GridRow {
+                            ScrollView(.horizontal) {
+                                Text("Score: \(score)")
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .scrollIndicators(.hidden)
+                            ScrollView(.horizontal) {
+                                Text("High Score: \(highScore)")
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .scrollIndicators(.hidden)
+                        }
+                        GridRow {
+                            Text("Level: \(level)")
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text("Lines Cleared: \(linesCleared)")
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .font(.system(.headline, design: .monospaced, weight: .regular))
+                    .monospacedDigit()
+                    .padding()
+                    
                     Grid(alignment: .center, horizontalSpacing: 0, verticalSpacing: 0) {
                         ForEach(0..<22) { row in
                             GridRow(alignment: .center) {
@@ -205,17 +243,21 @@ struct ContentView: View {
                     // swipe gestures for left, right and down
                     DragGesture(minimumDistance: 50)
                         .onEnded { new in
-                            if new.translation.width > 50 && abs(new.translation.height) < 40 && canMove(toRow: pieceRow, toCol: pieceCol + 1, piece: currentPiece) {
+                            if new.translation.width > 50 && abs(new.translation.height) < 60 && canMove(toRow: pieceRow, toCol: pieceCol + 1, piece: currentPiece) {
                                 pieceCol += 1
-                            } else if new.translation.width < -50 && abs(new.translation.height) < 40 && canMove(toRow: pieceRow, toCol: pieceCol - 1, piece: currentPiece) {
+                            } else if new.translation.width < -50 && abs(new.translation.height) < 60 && canMove(toRow: pieceRow, toCol: pieceCol - 1, piece: currentPiece) {
                                 pieceCol -= 1
-                            } else if new.translation.height > 140 && abs(new.translation.width) < 40 {
+                            } else if new.translation.height > 140 && abs(new.translation.width) < 80 {
+                                var droppedRows = 0
                                 while canMove(toRow: pieceRow + 1, toCol: pieceCol, piece: currentPiece) {
                                     pieceRow += 1
+                                    droppedRows += 1
                                 }
+                                score += droppedRows * 2
                                 lockPiece()
                             } else if new.translation.height > 50 && abs(new.translation.width) < 40 && canMove(toRow: pieceRow + 1, toCol: pieceCol, piece:currentPiece) {
                                 pieceRow += 1
+                                score += 1
                             }
                         }
                 )
@@ -226,7 +268,7 @@ struct ContentView: View {
                     } label: {
                         Text("Play")
                             .padding()
-                            .font(.system(.largeTitle, design: .serif, weight: .bold))
+                            .font(.system(.largeTitle, design: .monospaced, weight: .bold))
                     }
                     .tint(ContentView.colors.randomElement()!)
                     .buttonStyle(.glassProminent)
@@ -248,6 +290,7 @@ struct ContentView: View {
                     restart()
                 }
             }
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .title) {
                     Text("Tetris")
@@ -359,9 +402,13 @@ struct ContentView: View {
     }
     
     private func clearLines() {
+        let initialRowCount = gameBoard.count
+        
         gameBoard.removeAll(where: { row in
             row.allSatisfy { $0.color != .clear }
         })
+        
+        let clearedCount = initialRowCount - gameBoard.count
         
         while gameBoard.count < 20 {
             var emptyRow: [Tile] = []
@@ -370,6 +417,21 @@ struct ContentView: View {
             }
             gameBoard.insert(emptyRow, at: 0)
         }
+        
+        if clearedCount > 0 {
+            linesCleared += clearedCount
+            
+            let basePoints: Int
+            switch clearedCount {
+                case 1: basePoints = 100
+                case 2: basePoints = 300
+                case 3: basePoints = 500
+                case 4: basePoints = 800
+                default: basePoints = 0
+            }
+            
+            score += basePoints * level
+        }
     }
     
     private func spawnPiece() {
@@ -377,6 +439,7 @@ struct ContentView: View {
         let candidateColor = nextColor
         
         if !canMove(toRow: 0, toCol: 3, piece: candidatePiece) {
+            highScore = max(score, highScore)
             isGameOver = true
             return
         }
@@ -421,6 +484,9 @@ struct ContentView: View {
         pieceRow = 0
         pieceCol = 3
         isGameOver = false
+        
+        score = 0
+        linesCleared = 0
     }
 }
 
