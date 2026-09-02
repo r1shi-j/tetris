@@ -8,6 +8,115 @@
 import SwiftUI
 import Combine
 
+import GameController
+import Observation
+
+@Observable
+class GamepadManager {
+    var onMoveLeft: (() -> Void)?
+    var onMoveRight: (() -> Void)?
+    var onSoftDrop: (() -> Void)?
+    var onHardDrop: (() -> Void)?
+    var onRotate: (() -> Void)?
+    var onRestart: (() -> Void)?
+    
+    private var hasTiltedStick = false
+    
+    init() {
+        NotificationCenter.default.addObserver(
+            forName: .GCControllerDidConnect,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            if let controller = notification.object as? GCController {
+                self?.configure(controller: controller)
+            }
+        }
+        
+        if let controller = GCController.controllers().first {
+            configure(controller: controller)
+        }
+    }
+    
+    private func configure(controller: GCController) {
+        guard let gamepad = controller.extendedGamepad else { return }
+        // 1. D-Pad
+        gamepad.dpad.left.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onMoveLeft?() }
+        }
+        gamepad.dpad.right.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onMoveRight?() }
+        }
+//        gamepad.dpad.up.pressedChangedHandler = { [weak self] _, _, pressed in
+//            if pressed { self?.onRotate?() }
+//        }
+        gamepad.dpad.down.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onSoftDrop?() }
+        }
+        
+        // 2. Left Thumbstick (analog stick)
+        gamepad.leftThumbstick.valueChangedHandler = { [weak self] _, x, y in
+            guard let self = self else { return }
+            let deadzone: Float = 0.5
+            
+            if !self.hasTiltedStick {
+                if x < -deadzone {
+                    self.onMoveLeft?()
+                    self.hasTiltedStick = true
+                } else if x > deadzone {
+                    self.onMoveRight?()
+                    self.hasTiltedStick = true
+                } else if y < -deadzone {
+                    self.onSoftDrop?()
+                    self.hasTiltedStick = true
+                } else if y > deadzone {
+//                    self.onRotate?()
+//                    self.hasTiltedStick = true
+                }
+            } else if abs(x) < 0.2 && abs(y) < 0.2 {
+                // Reset flag when stick returns to center
+                self.hasTiltedStick = false
+            }
+        }
+        
+        // 3. Left Shoulders (L or ZL) -> Rotate
+        gamepad.leftShoulder.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onRotate?() }
+        }
+        gamepad.leftTrigger.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onRotate?() }
+        }
+        
+        // 4. Right Shoulders (R or ZR) -> Hard Drop
+        gamepad.rightShoulder.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onHardDrop?() }
+        }
+        gamepad.rightTrigger.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onHardDrop?() }
+        }
+        
+        // 5. Face Buttons
+        // buttonY = Top button -> Rotate
+        gamepad.buttonY.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onRotate?() }
+        }
+        // buttonA = Bottom button -> Hard Drop
+        gamepad.buttonA.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onHardDrop?() }
+        }
+        
+        // 6. Plus / Minus Buttons -> Restart
+        // buttonMenu = Plus button (+), buttonOptions = Minus button (-)
+        gamepad.buttonMenu.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onRestart?() }
+        }
+        gamepad.buttonOptions?.pressedChangedHandler = { [weak self] _, _, pressed in
+            if pressed { self?.onRestart?() }
+        }
+    }
+}
+
+
 struct Tile {
     let id = UUID()
     var color: Color
@@ -105,6 +214,7 @@ struct ContentView: View {
     @State private var linesCleared = 0
     @State private var score = 0
     @AppStorage("highScore") private var highScore = 0
+    @State private var gamepad = GamepadManager()
     
     private var level: Int {
         (linesCleared / 10) + 1
@@ -338,6 +448,66 @@ struct ContentView: View {
                     .disabled(isFreshStart)
                 }
             }
+            .onAppear {
+                setupGamepadBindings()
+            }
+        }
+    }
+    
+    private func setupGamepadBindings() {
+        // Left
+        gamepad.onMoveLeft = {
+            guard !isGameOver, !isFreshStart else { return }
+            if canMove(toRow: pieceRow, toCol: pieceCol - 1, piece: currentPiece) {
+                pieceCol -= 1
+            }
+        }
+        
+        // Right
+        gamepad.onMoveRight = {
+            guard !isGameOver, !isFreshStart else { return }
+            if canMove(toRow: pieceRow, toCol: pieceCol + 1, piece: currentPiece) {
+                pieceCol += 1
+            }
+        }
+        
+        // Soft Drop
+        gamepad.onSoftDrop = {
+            guard !isGameOver, !isFreshStart else { return }
+            if canMove(toRow: pieceRow + 1, toCol: pieceCol, piece: currentPiece) {
+                pieceRow += 1
+            }
+        }
+        
+        // Rotate
+        gamepad.onRotate = {
+            guard !isGameOver, !isFreshStart else { return }
+            let rotated = currentPiece.rotatedClockwise()
+            if canMove(toRow: pieceRow, toCol: pieceCol, piece: rotated) {
+                currentPiece = rotated
+            }
+        }
+        
+        // Hard Drop (also dismisses game over if active)
+        gamepad.onHardDrop = {
+            if isGameOver || isFreshStart {
+                isFreshStart = false
+                restart()
+                return
+            }
+            
+            while canMove(toRow: pieceRow + 1, toCol: pieceCol, piece: currentPiece) {
+                pieceRow += 1
+            }
+            lockPiece()
+        }
+        
+        // Restart (+ / - buttons)
+        gamepad.onRestart = {
+            if isFreshStart {
+                isFreshStart = false
+            }
+            restart()
         }
     }
     
@@ -351,7 +521,7 @@ struct ContentView: View {
         return false
     }
     
-    func isGhostBlock(boardRow: Int, boardCol: Int) -> Bool {
+    private func isGhostBlock(boardRow: Int, boardCol: Int) -> Bool {
         guard projectedRow != pieceRow else { return false }
         
         let r = boardRow - projectedRow
